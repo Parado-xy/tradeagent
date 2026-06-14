@@ -1,0 +1,30 @@
+{
+  "name": "tradeagent",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev:api": "npm run dev --prefix apps/api",
+    "dev:voice": "npm run dev --prefix apps/voice",
+    "dev": "concurrently \"npm run dev:api\" \"npm run dev:voice\"",
+    "db:migrate": "prisma migrate dev",
+    "db:deploy": "prisma migrate deploy",
+    "db:generate": "prisma generate",
+    "db:seed": "ts-node db/prisma/seed.ts",
+    "db:studio": "prisma studio",
+    "db:reset": "prisma migrate reset"
+  },
+  "prisma": {
+    "seed": "ts-node db/prisma/seed.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^25.9.3",
+    "concurrently": "^8.2.2",
+    "dotenv": "^16.4.5",
+    "prisma": "^6.0.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.4.5"
+  },
+  "dependencies": {
+    "@prisma/client": "^6.19.3"
+  }
+}
