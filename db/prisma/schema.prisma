@@ -134,8 +134,11 @@ model Conversation {
   // The ? makes this nullable — no job until the AI decides one is warranted
   job     Job?
 
+  vapiCallId String? // This is the vapiCallId. It will be used for finding the ongoing conversation.
+
   @@index([tenantId])
   @@index([contactId])
+  @@index([vapiCallId])
   @@map("conversations")
 }
 
