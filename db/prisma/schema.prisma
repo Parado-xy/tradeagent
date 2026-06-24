@@ -36,7 +36,8 @@ model Tenant {
   phoneNumber     String   @unique
   // The number WE provision via Twilio — calls to this get
   // intercepted by TradeAgent before ringing through
-  twilioNumber    String   @unique
+  twilioNumber    String?   @unique
+  vapiPhoneNumberId String? @unique // Unique phone numberID given by VAPI
   // Set after the operator completes Stripe Connect onboarding.
   // Null until then — we can't send them money without it.
   stripeAccountId String?

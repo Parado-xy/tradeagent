@@ -7,36 +7,33 @@
 // Respond 200 IMMEDIATELY for fire-and-forget events. Do the work after.
 //
 // Events that REQUIRE a response (VAPI waits synchronously):
-//   "assistant-request"          → return assistantId or transient assistant config
-//   "tool-calls"                 → return { results: [...] } with tool outputs
+//   "assistant-request"            → return assistantId or transient assistant config
+//   "tool-calls"                   → return { results: [...] } with tool outputs
 //   "transfer-destination-request" → return { destination: {...} }
 //
 // Fire-and-forget events (reply 200 immediately, process async):
-//   "status-update"              → track call lifecycle (ringing, in-progress, ended)
-//   "end-of-call-report"         → full transcript + recording URL available here
-//   "hang"                       → call is stuck, surface to your team
-//   "conversation-update"        → incremental conversation history
+//   "status-update"        → track call lifecycle (ringing, in-progress, ended)
+//   "end-of-call-report"   → full transcript + recording URL available here
+//   "hang"                 → call is stuck, surface to your team
 
 import { FastifyInstance } from "fastify";
 import { findOrCreateContact } from "../services/contactService";
 import { classifyTriage } from "../services/triageService";
 import { createJobFromCall } from "../services/jobService";
-import { Channel, ConversationStatus } from "../../../../db/generated/client";
+import {
+  Channel,
+  ConversationStatus,
+  PrismaClient,
+} from "../../../../db/generated/client";
 
 export default async function vapiRoute(fastify: FastifyInstance) {
-  // POST /webhooks/vapi/events
-  // Single entry point — all VAPI events arrive here
   fastify.post("/vapi/events", async (request, reply) => {
     const body = request.body as VapiWebhookBody;
     const msg = body.message;
 
     // ── Synchronous events — VAPI waits for our response ──────────────────
-    // These must reply with data, not { received: true }.
 
     if (msg.type === "assistant-request") {
-      // VAPI is asking which assistant to use for this inbound call.
-      // We reply with our saved assistant ID — fast, no DB call needed.
-      // If we needed caller-specific context we'd build a transient assistant here.
       return reply.send({ assistantId: process.env.VAPI_ASSISTANT_ID });
     }
 
@@ -64,20 +61,54 @@ export default async function vapiRoute(fastify: FastifyInstance) {
   });
 }
 
+// ── Tenant lookup ─────────────────────────────────────────────────────────
+//
+// Primary:  vapiPhoneNumberId — set during onboarding when we provision or
+//           import a number via VAPI's API. Works for both VAPI-provisioned
+//           and Twilio-imported numbers since VAPI assigns an ID to all of them.
+//
+// Fallback: SIP URI extraction — the called number is embedded in the SIP URI
+//           as the user portion: sip:3502029684@host:port
+//           We strip the +1 prefix from our stored twilioNumber to match.
+//           This covers the case where vapiPhoneNumberId was never stored
+//           (e.g. manually provisioned numbers, legacy tenants).
+
+async function findTenant(db: PrismaClient, call: VapiCall) {
+  // Primary: match by VAPI's phoneNumberId
+  if (call.phoneNumberId) {
+    const tenant = await db.tenant.findUnique({
+      where: { vapiPhoneNumberId: call.phoneNumberId },
+    });
+    if (tenant) return tenant;
+  }
+
+  // Fallback: extract number from SIP URI
+  // e.g. sip:3502029684@172.30.13.20:5060 → "3502029684"
+  const sipUri = call.phoneCallProviderDetails?.sip?.uri ?? "";
+  const sipMatch = sipUri.match(/^sip:(\d+)@/);
+  if (sipMatch) {
+    const rawNumber = sipMatch[1]; // e.g. "3502029684"
+    // Our twilioNumber is stored as +13502029684 — strip the country code to compare
+    const tenant = await db.tenant.findFirst({
+      where: {
+        twilioNumber: { endsWith: rawNumber },
+      },
+    });
+    if (tenant) return tenant;
+  }
+
+  return null;
+}
+
 // ── Synchronous handlers ──────────────────────────────────────────────────
 
 async function handleToolCalls(
   fastify: FastifyInstance,
   msg: VapiToolCallsMessage,
 ): Promise<VapiToolCallsResponse> {
-  const toNumber = msg.call?.phoneNumber?.number ?? "";
-
-  const tenant = await fastify.db.tenant.findUnique({
-    where: { twilioNumber: toNumber },
-  });
+  const tenant = await findTenant(fastify.db, msg.call);
 
   if (!tenant) {
-    // Return a graceful spoken error for each pending tool call
     return {
       results: msg.toolCallList.map((tc) => ({
         toolCallId: tc.id,
@@ -99,7 +130,6 @@ async function handleToolCalls(
             message:
               available > 0
                 ? "Yes, we have technicians available today."
-                // TODO: Look into building a calendar. How are we sure we're free tomorrow?
                 : "We are fully booked today but can schedule you for tomorrow.",
           }),
         };
@@ -154,51 +184,54 @@ async function handleStatusUpdate(
   fastify: FastifyInstance,
   msg: VapiStatusUpdateMessage,
 ) {
-  if (msg.status === "in-progress") {
-    // Call connected — open a conversation record
-    const toNumber = msg.call?.phoneNumber?.number ?? "";
-    const fromNumber = msg.call?.customer?.number ?? "";
-    const callerName = msg.call?.customer?.name;
+  if (msg.status !== "in-progress") return;
 
-    const tenant = await fastify.db.tenant.findUnique({
-      where: { twilioNumber: toNumber },
-    });
-    if (!tenant) return;
-
-    const contact = await findOrCreateContact(fastify.db, tenant.id, {
-      phone: fromNumber,
-      name: callerName,
-    });
-
-    await fastify.db.conversation.create({
-      data: {
-        tenantId: tenant.id,
-        contactId: contact.id,
-        channel: Channel.VOICE,
-        status: ConversationStatus.ACTIVE,
-        vapiCallId: msg.call?.id,
-      },
-    });
-
-    fastify.log.info(
-      { tenantId: tenant.id, fromNumber },
-      "Call in-progress — conversation opened",
+  const tenant = await findTenant(fastify.db, msg.call);
+  if (!tenant) {
+    fastify.log.warn(
+      { callId: msg.call?.id },
+      "status-update: no tenant found",
     );
+    return;
   }
+
+  const fromNumber = msg.call?.customer?.number ?? "";
+  const callerName = msg.call?.customer?.name;
+
+  const contact = await findOrCreateContact(fastify.db, tenant.id, {
+    phone: fromNumber,
+    name: callerName,
+  });
+
+  await fastify.db.conversation.create({
+    data: {
+      tenantId: tenant.id,
+      contactId: contact.id,
+      channel: Channel.VOICE,
+      status: ConversationStatus.ACTIVE,
+      vapiCallId: msg.call?.id,
+    },
+  });
+
+  fastify.log.info(
+    { tenantId: tenant.id, fromNumber },
+    "Call in-progress — conversation opened",
+  );
 }
 
 async function handleEndOfCallReport(
   fastify: FastifyInstance,
   msg: VapiEndOfCallReportMessage,
 ) {
-  const toNumber = msg.call?.phoneNumber?.number ?? "";
+  const tenant = await findTenant(fastify.db, msg.call);
+  if (!tenant) {
+    fastify.log.warn(
+      { callId: msg.call?.id },
+      "end-of-call-report: no tenant found",
+    );
+    return;
+  }
 
-  const tenant = await fastify.db.tenant.findUnique({
-    where: { twilioNumber: toNumber },
-  });
-  if (!tenant) return;
-
-  // Match the conversation we opened when the call went in-progress
   const conversation = await fastify.db.conversation.findFirst({
     where: {
       tenantId: tenant.id,
@@ -212,26 +245,21 @@ async function handleEndOfCallReport(
   if (!conversation) {
     fastify.log.warn(
       { callId: msg.call?.id },
-      "end-of-call-report but no open conversation found",
+      "end-of-call-report: no open conversation found",
     );
     return;
   }
 
   const transcript = msg.artifact?.transcript ?? "";
 
-  // Caller hung up immediately with no real conversation
   if (transcript.trim().length < 20) {
     await fastify.db.conversation.update({
       where: { id: conversation.id },
-      data: {
-        status: ConversationStatus.ABANDONED,
-        resolvedAt: new Date(),
-      },
+      data: { status: ConversationStatus.ABANDONED, resolvedAt: new Date() },
     });
     return;
   }
 
-  // Classify the call using Claude
   const triage = await classifyTriage(transcript);
 
   await fastify.db.conversation.update({
@@ -268,9 +296,14 @@ async function handleEndOfCallReport(
 
 // ── Types ─────────────────────────────────────────────────────────────────
 
+interface SipDetails {
+  uri?: string;
+}
+
 interface VapiCall {
   id: string;
-  phoneNumber?: { number: string };
+  phoneNumberId?: string;
+  phoneCallProviderDetails?: { sip?: SipDetails };
   customer?: { number: string; name?: string };
 }
 
@@ -279,7 +312,6 @@ interface VapiArtifact {
   recording?: { url?: string };
 }
 
-// Discriminated union — add more event shapes as needed
 type VapiMessage =
   | VapiAssistantRequestMessage
   | VapiToolCallsMessage
