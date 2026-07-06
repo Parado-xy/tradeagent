@@ -29,6 +29,12 @@ const TriageSchema = z.object({
   summary: z
     .string()
     .describe("1-2 sentences describing the issue for the technician"),
+  customerName: z
+    .string()
+    .describe("The name of the customer collected"),
+  address: z
+    .string()
+    .describe("The address of the customer"),
   shouldCreateJob: z.boolean(),
   confidence: z.number().min(0).max(1),
 });
@@ -43,6 +49,8 @@ export async function classifyTriage(input: string): Promise<TriageResult> {
       tier: TriageTier.ROUTINE,
       tradeType: TradeType.GENERAL,
       summary: "No description provided.",
+      address: "No address provided",
+      customerName: "No name provided",
       shouldCreateJob: false,
       confidence: 1,
     };
@@ -77,6 +85,8 @@ shouldCreateJob = false ONLY when:
       tier: TriageTier.ROUTINE,
       tradeType: TradeType.PLUMBING,
       summary: "Triage classification failed — needs manual review.",
+      address: "",
+      customerName: "",
       shouldCreateJob: true,
       confidence: 0,
     };
