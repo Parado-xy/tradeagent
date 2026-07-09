@@ -27,7 +27,10 @@ import {
   SmsDirection,
   JobStatus,
 } from "../../../../db/generated/client";
-import { sendTechNotification } from "../services/smsService";
+import {
+  sendTechNotification,
+  sendTechUnavailableNotice,
+} from "../services/smsService";
 
 export default async function twilioRoute(fastify: FastifyInstance) {
   fastify.post("/twilio/sms", async (request, reply) => {
@@ -211,7 +214,7 @@ async function handleAddressConfirmation(
 // Invalid replies: anything else → log and ignore (thread stays open)
 //
 // On valid selection:
-//   - assign tech to job (job.technicianId, job.status → DISPATCHED)
+//   - assign tech to job if AVAILABLE (job.technicianId, job.status → DISPATCHED)
 //   - update tech status → DISPATCHED
 //   - close the thread
 //   - SMS the tech via sendTechNotification
@@ -240,27 +243,56 @@ async function handleDispatchSelection(
 
   const job = thread.job;
 
-  // Re-query in the same order as sendDispatchSelection
-  const availableTechs = await db.technician.findMany({
-    where: {
-      tenantId: tenant.id,
-      status: "AVAILABLE",
-      skillTags: { has: job.tradeType },
-    },
-    orderBy: { name: "asc" },
-  });
+  const techOrder = (thread.meta as { techOrder?: string[] } | null)?.techOrder;
 
-  const selectedTech = availableTechs[selection - 1]; // convert 1-indexed to 0-indexed
+  if (!techOrder) {
+    // Thread predates the meta column, or was created without it —
+    // fail safe rather than silently falling back to a re-query that
+    // could dispatch the wrong tech.
+    fastify.log.error(
+      { threadId: thread.id },
+      "Dispatch selection: thread has no cached tech order — ignoring reply",
+    );
+    return;
+  }
 
-  if (!selectedTech) {
+  const selectedTechId = techOrder[selection - 1]; // 1-indexed to 0-indexed
+
+  if (!selectedTechId) {
     fastify.log.warn(
-      { threadId: thread.id, selection, available: availableTechs.length },
+      { threadId: thread.id, selection, available: techOrder.length },
       "Dispatch selection: number out of range — ignoring",
     );
     return;
   }
 
-  // Assign tech to job and mark both as dispatched — atomic transaction
+  const selectedTech = await db.technician.findUnique({
+    where: { id: selectedTechId },
+  });
+
+  if (!selectedTech) {
+    fastify.log.error(
+      { threadId: thread.id, selectedTechId },
+      "Dispatch selection: cached tech no longer exists — ignoring",
+    );
+    return;
+  }
+
+    // Makes sure we don't double book. 
+if (selectedTech.status !== "AVAILABLE") {
+    fastify.log.warn(
+      { threadId: thread.id, selectedTechId, status: selectedTech.status },
+      "Dispatch selection: chosen tech is no longer available",
+    );
+
+    const fullTenant = await db.tenant.findUniqueOrThrow({
+      where: { id: tenant.id },
+    });
+
+    await sendTechUnavailableNotice(fullTenant, selectedTech.name);
+    return;
+  }
+
   await db.$transaction([
     db.job.update({
       where: { id: job.id },
@@ -287,14 +319,12 @@ async function handleDispatchSelection(
     "Tech dispatched",
   );
 
-  // Notify the tech — fetch full tenant for twilioNumber
   const fullTenant = await db.tenant.findUniqueOrThrow({
     where: { id: tenant.id },
   });
 
   await sendTechNotification(fullTenant, selectedTech, job, job.contact);
 }
-
 // ── Types ─────────────────────────────────────────────────────────────────
 
 interface TwilioSmsPayload {
@@ -308,6 +338,7 @@ interface TwilioSmsPayload {
 type ThreadWithJob = {
   id: string;
   purpose: "ADDRESS_CONFIRMATION" | "DISPATCH_SELECTION";
+  meta: {};
   job: {
     id: string;
     address: string;

@@ -170,12 +170,6 @@ export async function sendAddressConfirmation(
 // have a metadata column on SmsThread. Instead we store the ordered list
 // in the outbound SmsMessage body and re-parse it on reply — fragile.
 //
-// TODO:
-// Better: we store the serialized tech order in a `meta` Json column.
-// We'll add that to the schema. For now, we store it in the message body
-// and the inbound handler re-queries available techs in the same order.
-// (See note in twilio.ts about ordering consistency.)
-
 export async function sendDispatchSelection(
   db: PrismaClient,
   tenant: Tenant,
@@ -190,17 +184,18 @@ export async function sendDispatchSelection(
   }
 
   if (!tenant.twilioNumber) {
-    throw new Error(`Tenant ${tenant.id} has no twilioNumber — cannot send SMS`);
+    throw new Error(
+      `Tenant ${tenant.id} has no twilioNumber — cannot send SMS`,
+    );
   }
 
-  // Find available techs with the right skill for this trade type
   const availableTechs = await db.technician.findMany({
     where: {
       tenantId: tenant.id,
       status: "AVAILABLE",
       skillTags: { has: job.tradeType },
     },
-    orderBy: { name: "asc" }, // deterministic order — inbound handler must match
+    orderBy: { name: "asc" },
   });
 
   const tierLabel: Record<TriageTier, string> = {
@@ -210,7 +205,6 @@ export async function sendDispatchSelection(
     ESTIMATE: "💬 ESTIMATE",
   };
 
-  // Build the tech selection list
   const techLines =
     availableTechs.length > 0
       ? availableTechs
@@ -238,6 +232,14 @@ export async function sendDispatchSelection(
     body,
   });
 
+  // Freeze the ordered tech list at send-time. The inbound handler reads
+  // this instead of re-querying — a tech's status can change between
+  // send and reply, which previously could shift the numbering and
+  // misassign the job to the wrong technician.
+  const meta = {
+    techOrder: availableTechs.map((t) => t.id),
+  };
+
   await db.smsThread.create({
     data: {
       tenantId: tenant.id,
@@ -246,6 +248,7 @@ export async function sendDispatchSelection(
       to: tenant.dispatcherPhone,
       purpose: SmsPurpose.DISPATCH_SELECTION,
       expiresAt: expiresFromNow(EXPIRY_MINUTES.DISPATCH_SELECTION),
+      meta,
       messages: {
         create: {
           direction: SmsDirection.OUTBOUND,
@@ -258,7 +261,6 @@ export async function sendDispatchSelection(
 
   return { technicianCount: availableTechs.length };
 }
-
 // ── 4. Tech notification ──────────────────────────────────────────────────
 //
 // Fired after the dispatcher replies and we've assigned the tech.
@@ -290,5 +292,35 @@ export async function sendTechNotification(
     to: tech.phone,
     from: tenant.twilioNumber,
     body,
+  });
+}
+
+// ── 5. Tech no-longer-available notice ────────────────────────────────────
+//
+// Fired when the dispatcher's selection maps to a tech who was AVAILABLE
+// at send-time but has since been assigned elsewhere — the race this
+// whole SmsThread.meta fix exists to catch cleanly instead of silently
+// double-booking. No SmsThread — the DISPATCH_SELECTION thread this
+// belongs to has already been left open (or closed as invalid) by the
+// caller; we're just notifying, not opening a new expectation of reply.
+
+export async function sendTechUnavailableNotice(
+  tenant: Tenant,
+  techName: string,
+): Promise<void> {
+  if (!tenant.twilioNumber) {
+    throw new Error(`Tenant ${tenant.id} has no twilioNumber — cannot send SMS`);
+  }
+
+  if (!tenant.dispatcherPhone) {
+    throw new Error(
+      `Tenant ${tenant.id} has no dispatcherPhone — cannot send SMS`,
+    );
+  }
+
+  await twilioClient.messages.create({
+    to: tenant.dispatcherPhone,
+    from: tenant.twilioNumber,
+    body: `${techName} is no longer available — please choose another tech or handle manually.`,
   });
 }
