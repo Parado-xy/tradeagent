@@ -35,6 +35,8 @@ const TriageSchema = z.object({
   address: z
     .string()
     .describe("The address of the customer"),
+  city: z.string().describe("The city as extracted from the given address"),
+  state: z.string().describe("The state as extracted from the given address"),
   shouldCreateJob: z.boolean(),
   confidence: z.number().min(0).max(1),
 });

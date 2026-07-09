@@ -12,7 +12,8 @@ import OpenAI from "openai";
 import { PrismaClient } from "../../../../db/generated/client";
 
 const anthropic = new Anthropic();
-const openai = new OpenAI();
+const openai = new OpenAI({apiKey: process.env.OPENAI_API_KEY});
+
 
 export interface InvoiceLineItem {
   description: string;

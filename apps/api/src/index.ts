@@ -17,6 +17,11 @@ import contactsRoute from "./routes/contacts";
 import jobsRoute from "./routes/jobs";
 import invoicesRoute from "./routes/invoices";
 import techniciansRoute from "./routes/technicians";
+import provisioningRoute from "./routes/provisioning"
+import dotenv from "dotenv";
+
+// Condigure dotenv
+dotenv.config();
 
 const server = Fastify({
   // Fastify has a built-in logger powered by pino.
@@ -46,12 +51,13 @@ async function start() {
   // ── Routes ────────────────────────────────────────────────
   // Every route is prefixed with /api/v1 so we have room
   // to introduce /api/v2 later without breaking existing clients.
-
+  const version = "v1"; // Define the version. 
   await server.register(healthRoute);
-  await server.register(contactsRoute, { prefix: "/api/v1" });
-  await server.register(jobsRoute, { prefix: "/api/v1" });
-  await server.register(invoicesRoute, { prefix: "/api/v1" });
-  await server.register(techniciansRoute, { prefix: "/api/v1" });
+  await server.register(contactsRoute, { prefix: `/api/${version}` });
+  await server.register(jobsRoute, { prefix: `/api/${version}` });
+  await server.register(invoicesRoute, { prefix: `/api/${version}` });
+  await server.register(techniciansRoute, { prefix: `/api/${version}` });
+  await server.register(provisioningRoute, {prefix: `/api/${version}`})
 
   // ── Start ─────────────────────────────────────────────────
   try {

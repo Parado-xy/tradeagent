@@ -12,6 +12,12 @@ import  dbPlugin  from "./plugins/db";
 import healthRoute from "./routes/health";
 import vapiRoute from "./routes/vapi";
 import smsRoute from "./routes/sms";
+import formbody from "@fastify/formbody";
+import twilioRoute from "./routes/twilio";
+import dotenv from "dotenv"
+
+// Configure dotenv.
+dotenv.config();
 
 const server = Fastify({
   logger: {
@@ -25,11 +31,13 @@ const server = Fastify({
 async function start() {
   // ── Plugins ───────────────────────────────────────────────
   await server.register(dbPlugin);
+  await server.register(formbody);
 
   // ── Routes ────────────────────────────────────────────────
   await server.register(healthRoute);
   await server.register(vapiRoute, { prefix: "/webhooks" });
   await server.register(smsRoute, { prefix: "/webhooks" });
+  await server.register(twilioRoute, {prefix: "/webhooks"})
 
   // ── Start ─────────────────────────────────────────────────
   try {

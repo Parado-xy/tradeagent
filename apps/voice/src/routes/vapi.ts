@@ -25,6 +25,11 @@ import {
   ConversationStatus,
   PrismaClient,
 } from "../../../../db/generated/client";
+import {
+  sendCustomerAck,
+  sendAddressConfirmation,
+  sendDispatchSelection,
+} from "../services/smsService";
 
 export default async function vapiRoute(fastify: FastifyInstance) {
   fastify.post("/vapi/events", async (request, reply) => {
@@ -219,6 +224,7 @@ async function handleStatusUpdate(
   );
 }
 
+
 async function handleEndOfCallReport(
   fastify: FastifyInstance,
   msg: VapiEndOfCallReportMessage,
@@ -270,30 +276,101 @@ async function handleEndOfCallReport(
       aiSummary: triage.summary,
       transcriptUrl: msg.artifact?.recording?.url,
       resolvedAt: new Date(),
+      contact: {
+        name: triage.customerName,
+        address: triage.address,
+        city: triage.city,
+        state: triage.state,
+      }
     },
   });
 
-  if (triage.shouldCreateJob) {
-    await createJobFromCall(fastify.db, {
-      tenantId: tenant.id,
-      contactId: conversation.contactId,
-      conversationId: conversation.id,
-      triageTier: triage.tier,
-      description: triage.summary,
-      tradeType: triage.tradeType,
-      address: conversation.contact.address ?? "",
-      city: conversation.contact.city ?? undefined,
-      state: conversation.contact.state ?? undefined,
-      zip: conversation.contact.zip ?? undefined,
-    });
-
-    fastify.log.info(
-      { tier: triage.tier, tenantId: tenant.id },
-      "Job created from call",
+  // ── SMS: customer acknowledgement ───────────────────────────────────────
+  //
+  // Fire immediately — customer knows their call was received.
+  // Non-blocking: if this fails we log and continue. A failed ack
+  // shouldn't block job creation or dispatch.
+  if (tenant.twilioNumber) {
+    sendCustomerAck(conversation.contact, tenant).catch((err) =>
+      fastify.log.error(
+        { err, contactId: conversation.contactId },
+        "Failed to send customer ack",
+      ),
+    );
+  } else {
+    fastify.log.warn(
+      { tenantId: tenant.id },
+      "Skipping customer ack — tenant has no twilioNumber",
     );
   }
-}
 
+  if (!triage.shouldCreateJob) {
+    // No job warranted (ESTIMATE tier or similar) — nothing left to do
+    fastify.log.info(
+      { tier: triage.tier, tenantId: tenant.id },
+      "Triage complete — no job created",
+    );
+    return;
+  }
+
+  // ── Job creation ────────────────────────────────────────────────────────
+  const job = await createJobFromCall(fastify.db, {
+    tenantId: tenant.id,
+    contactId: conversation.contactId,
+    conversationId: conversation.id,
+    triageTier: triage.tier,
+    description: triage.summary,
+    tradeType: triage.tradeType,
+    address: conversation.contact.address ?? "",
+    city: conversation.contact.city ?? undefined,
+    state: conversation.contact.state ?? undefined,
+    zip: conversation.contact.zip ?? undefined,
+  });
+
+  fastify.log.info(
+    { tier: triage.tier, tenantId: tenant.id, jobId: job.id },
+    "Job created from call",
+  );
+
+  // ── SMS: address confirmation + dispatch selection ──────────────────────
+  //
+  // Both run concurrently — they're independent of each other.
+  // Address confirmation goes to the customer.
+  // Dispatch selection goes to the dispatcher.
+  //
+  // We await both so errors surface in this handler's catch block
+  // rather than silently failing. Job is already created at this point
+  // so a failed SMS doesn't roll anything back — we log and move on.
+  //
+  // Why not fire-and-forget like the ack?
+  // The ack is a courtesy message. These two open SmsThreads that drive
+  // the rest of the dispatch flow — we want to know if they fail.
+
+  const smsResults = await Promise.allSettled([
+    sendAddressConfirmation(
+      fastify.db,
+      tenant,
+      conversation.contact,
+      job,
+      conversation.id,
+    ),
+    sendDispatchSelection(fastify.db, tenant, job, triage, conversation.id),
+  ]);
+
+  // Log any failures without throwing — the job exists, dispatch can
+  // still happen manually if SMS fails
+  smsResults.forEach((result, i) => {
+    if (result.status === "rejected") {
+      const label =
+        i === 0 ? "sendAddressConfirmation" : "sendDispatchSelection";
+      fastify.log.error(
+        { err: result.reason, jobId: job.id, tenantId: tenant.id },
+        `${label} failed`,
+      );
+    }
+  });
+}
+ 
 // ── Types ─────────────────────────────────────────────────────────────────
 
 interface SipDetails {

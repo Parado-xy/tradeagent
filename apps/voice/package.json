@@ -3,15 +3,17 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "ts-node-dev --respawn --transpile-only src/index.ts",
+    "dev": "ts-node-dev --respawn --transpile-only --require dotenv/config src/index.ts",
     "build": "tsc",
     "start": "node dist/apps/voice/src/index.js"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^3.0.86",
     "@anthropic-ai/sdk": "^0.24.0",
+    "@fastify/formbody": "^8.0.2",
     "@prisma/client": "^6.0.0",
     "ai": "^6.0.209",
+    "dotenv": "^17.4.2",
     "fastify": "^5.0.0",
     "fastify-plugin": "^6.0.0",
     "twilio": "^5.2.0",
