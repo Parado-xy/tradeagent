@@ -277,10 +277,12 @@ async function handleEndOfCallReport(
       transcriptUrl: msg.artifact?.recording?.url,
       resolvedAt: new Date(),
       contact: {
+        update: { 
         name: triage.customerName,
         address: triage.address,
         city: triage.city,
         state: triage.state,
+        }
       }
     },
   });
