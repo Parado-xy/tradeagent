@@ -23,7 +23,7 @@ services:
         sync: false
       - key: ANTHROPIC_API_KEY
         sync: false
-      - key: OPENAI_API_KEY    buildCommand: npm install && npx prisma generate --schema=../../db/prisma/schema.prisma && npm run build
+      - key: OPENAI_API_KEY    
         sync: false
       - key: VAPI_API_KEY
         sync: false
