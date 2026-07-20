@@ -20,6 +20,7 @@ import { FastifyInstance } from "fastify";
 import { findOrCreateContact } from "../services/contactService";
 import { classifyTriage } from "../services/triageService";
 import { createJobFromCall } from "../services/jobService";
+import { getBusinessHoursStatus } from "../services/businessHoursService"; 
 import {
   Channel,
   ConversationStatus,
@@ -38,12 +39,16 @@ export default async function vapiRoute(fastify: FastifyInstance) {
 
     // ── Synchronous events — VAPI waits for our response ──────────────────
 
-    if (msg.type === "assistant-request") {
-      return reply.send({ assistantId: process.env.VAPI_ASSISTANT_ID });
-    }
-
     if (msg.type === "tool-calls") {
       return reply.send(await handleToolCalls(fastify, msg));
+    }
+
+    if (msg.type == "transfer-destination-request"){
+      return reply.send(await handleTransferDestinationRequest(fastify, msg));
+    }
+
+    if (msg.type === "assistant-request") {
+      return reply.send(await handleAssistantRequest(fastify, msg));
     }
 
     // ── Fire-and-forget events — reply 200, process after ─────────────────
@@ -173,6 +178,33 @@ async function handleToolCalls(
         };
       }
 
+      if (tc.function.name === "scheduleCallback") {
+        const { preferredTime, reason } = tc.function.arguments ?? {};
+
+        const contact = await findOrCreateContact(fastify.db, tenant.id, {
+          phone: msg.call?.customer?.number ?? "",
+          name: msg.call?.customer?.name,
+        });
+
+        await fastify.db.callbackRequest.create({
+          data: {
+            tenantId: tenant.id,
+            contactId: contact.id,
+            requestedTime: preferredTime ?? null, // free text for now — Phase 2 can parse to a real Date
+            reason: reason ?? "",
+            status: "PENDING",
+          },
+        });
+
+        return {
+          toolCallId: tc.id,
+          result: JSON.stringify({
+            scheduled: true,
+            message: `Got it — we'll call you back${preferredTime ? ` around ${preferredTime}` : " as soon as possible"}.`,
+          }),
+        };
+      }
+
       return {
         toolCallId: tc.id,
         result: `Unknown tool: ${tc.function.name}`,
@@ -268,6 +300,15 @@ async function handleEndOfCallReport(
 
   const triage = await classifyTriage(transcript);
 
+  // Only include contact fields that are actually present — a failed or
+  // low-confidence triage returns empty strings, and we don't want that
+  // to blank out good contact data captured on a previous call.
+  const contactUpdate: Record<string, string> = {};
+  if (triage.customerName) contactUpdate.name = triage.customerName;
+  if (triage.address) contactUpdate.address = triage.address;
+  if (triage.city) contactUpdate.city = triage.city;
+  if (triage.state) contactUpdate.state = triage.state;
+
   await fastify.db.conversation.update({
     where: { id: conversation.id },
     data: {
@@ -276,14 +317,9 @@ async function handleEndOfCallReport(
       aiSummary: triage.summary,
       transcriptUrl: msg.artifact?.recording?.url,
       resolvedAt: new Date(),
-      contact: {
-        update: { 
-        name: triage.customerName,
-        address: triage.address,
-        city: triage.city,
-        state: triage.state,
-        }
-      }
+      ...(Object.keys(contactUpdate).length > 0 && {
+        contact: { update: contactUpdate },
+      }),
     },
   });
 
@@ -372,6 +408,94 @@ async function handleEndOfCallReport(
     }
   });
 }
+
+// ── Synchronous handler: transfer-destination-request ─────────────────────
+//
+// VAPI calls this when the assistant decides (or is configured) to attempt
+// a live transfer. We return the tenant's dispatcherPhone as the transfer
+// destination, plus a fallbackPlan so VAPI hands the call back to the
+// assistant if the dispatcher doesn't pick up within the timeout —
+// this is what makes the AI "pick up if the original line doesn't answer."
+//
+// If it's after hours, skip the transfer attempt entirely and route
+// straight to the assistant — no point ringing a phone nobody's near.
+
+async function handleTransferDestinationRequest(
+  fastify: FastifyInstance,
+  msg: VapiTransferDestinationRequestMessage,
+): Promise<VapiTransferDestinationResponse> {
+  const tenant = await findTenant(fastify.db, msg.call);
+
+  if (!tenant || !tenant.dispatcherPhone) {
+    // No one to transfer to — stay with the assistant.
+    return { destination: null };
+  }
+
+  const { isAfterHours } = getBusinessHoursStatus(tenant);
+
+  if (isAfterHours) {
+    fastify.log.info(
+      { tenantId: tenant.id },
+      "transfer-destination-request: after hours — assistant handles call",
+    );
+    return { destination: null };
+  }
+
+  return {
+    destination: {
+      type: "number",
+      number: tenant.dispatcherPhone,
+      transferPlan: {
+        mode: "warm-transfer-experimental",
+        message: "Transferring you now, one moment.",
+        fallbackPlan: {
+          message: "I wasn't able to reach the team right now — I can help you directly.",
+          endCallEnabled: false,
+        },
+      },
+    },
+  };
+}
+
+async function handleAssistantRequest(
+  fastify: FastifyInstance,
+  msg: VapiAssistantRequestMessage,
+): Promise<{
+  assistantId: string;
+  assistantOverrides?: { variableValues: Record<string, string> };
+}> {
+  const tenant = await findTenant(fastify.db, msg.call);
+  const fromNumber = msg.call?.customer?.number;
+
+  if (!tenant || !fromNumber) {
+    return { assistantId: process.env.VAPI_ASSISTANT_ID! };
+  }
+
+  const { isAfterHours } = getBusinessHoursStatus(tenant);
+
+  const existingContact = await fastify.db.contact.findUnique({
+    where: { tenantId_phone: { tenantId: tenant.id, phone: fromNumber } },
+    include: {
+      jobs: {
+        orderBy: { createdAt: "desc" },
+        take: 1,
+        select: { description: true, status: true },
+      },
+    },
+  });
+
+  return {
+    assistantId: process.env.VAPI_ASSISTANT_ID!,
+    assistantOverrides: {
+      variableValues: {
+        callerStatus: existingContact ? "returning" : "new",
+        callerName: existingContact?.name ?? "",
+        lastJobSummary: existingContact?.jobs[0]?.description ?? "",
+        businessHoursStatus: isAfterHours ? "after-hours" : "business-hours",
+      },
+    },
+  };
+}
  
 // ── Types ─────────────────────────────────────────────────────────────────
 
@@ -396,7 +520,8 @@ type VapiMessage =
   | VapiToolCallsMessage
   | VapiStatusUpdateMessage
   | VapiEndOfCallReportMessage
-  | VapiHangMessage;
+  | VapiHangMessage
+  | VapiTransferDestinationRequestMessage;
 
 interface VapiWebhookBody {
   message: VapiMessage;
@@ -448,4 +573,22 @@ interface VapiToolCallsResponse {
     toolCallId: string;
     result: string;
   }>;
+}
+
+
+interface VapiTransferDestinationRequestMessage {
+  type: "transfer-destination-request";
+  call: VapiCall;
+}
+
+interface VapiTransferDestinationResponse {
+  destination: {
+    type: "number";
+    number: string;
+    transferPlan?: {
+      message: string;
+      mode: string;
+      fallbackPlan?: { message: string, endCallEnabled: boolean };
+    };
+  } | null;
 }

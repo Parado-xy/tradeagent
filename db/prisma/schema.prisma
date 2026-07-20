@@ -8,12 +8,12 @@
 generator client {
   provider      = "prisma-client-js"
   binaryTargets = ["native", "linux-musl-openssl-3.0.x", "debian-openssl-3.0.x"]
-  output   = "../../db/generated/client"
+  output        = "../../db/generated/client"
 }
 
 datasource db {
   provider = "postgresql"
-  url = env("DATABASE_URL")
+  url      = env("DATABASE_URL")
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -50,14 +50,19 @@ model Tenant {
   plan              Plan     @default(ALPHA)
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
+  // The operating hours of the tenant. 
+  businessHourStart Int?
+  businessHoursEnd  Int?
+  timezone          String? 
 
-  contacts       Contact[]
-  technicians    Technician[]
-  priceBookItems PriceBookItem[]
-  conversations  Conversation[]
-  jobs           Job[]
-  invoices       Invoice[]
-  smsThreads     SmsThread[]
+  contacts         Contact[]
+  technicians      Technician[]
+  priceBookItems   PriceBookItem[]
+  conversations    Conversation[]
+  jobs             Job[]
+  invoices         Invoice[]
+  smsThreads       SmsThread[]
+  callbackRequests CallbackRequest[]
 
   @@map("tenants")
 }
@@ -95,9 +100,10 @@ model Contact {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  tenant        Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  conversations Conversation[]
-  jobs          Job[]
+  tenant           Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  conversations    Conversation[]
+  jobs             Job[]
+  callbackRequests CallbackRequest[]
 
   @@unique([tenantId, phone])
   @@index([tenantId])
@@ -124,9 +130,9 @@ model Conversation {
   aiSummary     String?
   startedAt     DateTime           @default(now())
   resolvedAt    DateTime?
-  vapiCallId    String? 
+  vapiCallId    String?
 
-  tenant     Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   contact    Contact     @relation(fields: [contactId], references: [id])
   job        Job?
@@ -199,7 +205,7 @@ model SmsThread {
   conversation Conversation @relation(fields: [conversationId], references: [id])
   job          Job          @relation(fields: [jobId], references: [id])
   messages     SmsMessage[]
-  meta          Json?
+  meta         Json?
 
   // Only one open thread per recipient per job.
   // Prevents duplicate threads if the webhook fires twice.
@@ -211,7 +217,7 @@ model SmsThread {
 
 enum SmsPurpose {
   ADDRESS_CONFIRMATION // sent to customer — waiting for address reply
-  DISPATCH_SELECTION   // sent to dispatcher — waiting for tech choice reply
+  DISPATCH_SELECTION // sent to dispatcher — waiting for tech choice reply
 }
 
 enum SmsThreadStatus {
@@ -249,7 +255,7 @@ model SmsMessage {
 
 enum SmsDirection {
   OUTBOUND // we sent it
-  INBOUND  // customer or dispatcher replied
+  INBOUND // customer or dispatcher replied
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -403,4 +409,17 @@ enum InvoiceStatus {
   SENT
   PAID
   VOID
+}
+
+// A callback request put in by the virtual assistant for a customer. 
+model CallbackRequest {
+  id            String   @id @default(cuid())
+  tenantId      String
+  contactId     String
+  requestedTime String?
+  reason        String
+  status        String   @default("PENDING") // PENDING | COMPLETED | CANCELLED
+  createdAt     DateTime @default(now())
+  tenant        Tenant   @relation(fields: [tenantId], references: [id])
+  contact       Contact  @relation(fields: [contactId], references: [id])
 }

@@ -133,12 +133,12 @@ async function importNumberToVapi(
       number: twilioNumber,
       twilioAccountSid: process.env.TWILIO_ACCOUNT_SID,
       twilioAuthToken: process.env.TWILIO_AUTH_TOKEN,
-      assistantId: process.env.VAPI_ASSISTANT_ID,
-      name: tenantName.slice(0, 40), // name is capped at 40 chars
-      // smsEnabled defaults to true — Vapi will reconfigure the
-      // Twilio messaging webhook URL on import. That would hijack
-      // the number away from our own /webhook/twilio/sms handler,
-      // so we explicitly disable it to preserve our SMS dispatch flow.
+      // NO assistantId here — leaving it unset forces VAPI to send an
+      // assistant-request webhook to our serverUrl on every inbound call,
+      // which is required for per-call customer recognition, business-hours
+      // branching, and the transfer/fallback logic to work at all.
+      // (See handleAssistantRequest in vapi.ts.)
+      name: tenantName.slice(0, 40),
       smsEnabled: false,
     }),
   });
