@@ -1,0 +1,60 @@
+services:
+  - type: web
+    name: tradeagent-api
+    runtime: node
+    rootDir: apps/api
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: API_PORT
+        value: "3001"
+      - key: DASHBOARD_URL
+        sync: false   # your deployed dashboard origin, once you know it
+      - key: DATABASE_URL
+        sync: false
+      - key: TWILIO_ACCOUNT_SID
+        sync: false
+      - key: TWILIO_AUTH_TOKEN
+        sync: false
+      - key: STRIPE_SECRET_KEY
+        sync: false
+      - key: STRIPE_WEBHOOK_SECRET
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: VAPI_API_KEY
+        sync: false
+      - key: VAPI_ASSISTANT_ID
+        sync: false
+      # Public URL of the voice service — hardcoded, not fromService,
+      # because VAPI and Twilio call this from outside Render's network.
+      # fromService/hostport only resolves on Render's private network
+      # and would be unreachable by either of them.
+      - key: VOICE_SERVICE_BASE_URL
+        value: https://tradeagent-voice.onrender.com
+
+  - type: web
+    name: tradeagent-voice
+    runtime: node
+    rootDir: apps/voice
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: VOICE_PORT
+        value: "3002"
+      - key: DATABASE_URL
+        sync: false
+      - key: TWILIO_ACCOUNT_SID
+        sync: false
+      - key: TWILIO_AUTH_TOKEN
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: VAPI_ASSISTANT_ID
+        sync: false
