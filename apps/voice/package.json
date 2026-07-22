@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "ts-node-dev --respawn --transpile-only --require dotenv/config src/index.ts",
     "build": "tsc",
-    "start": "node dist/apps/voice/src/index.js"
+    "start": "node dist/index.js"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^3.0.86",
