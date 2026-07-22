@@ -273,8 +273,8 @@ export async function sendDispatchSelection(
 export async function sendTechNotification(
   tenant: Tenant,
   tech: Technician,
-  job: Job,
-  contact: Contact,
+  job: {address: string, description: string},
+  contact: {name: string | null, phone: string | null, city: string | null},
 ): Promise<void> {
   if (!tenant.twilioNumber) {
     throw new Error(`Tenant ${tenant.id} has no twilioNumber — cannot send SMS`);
@@ -283,7 +283,7 @@ export async function sendTechNotification(
   const body = [
     `New job assigned — ${tenant.name}`,
     ``,
-    `Address: ${job.address}${job.city ? `, ${job.city}` : ""}`,
+    `Address: ${job.address}${contact.city ? `, ${contact.city}` : ""}`,
     `Issue: ${job.description}`,
     `Customer: ${contact.name ?? "Unknown"} — ${contact.phone}`,
   ].join("\n");

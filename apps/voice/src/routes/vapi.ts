@@ -431,7 +431,11 @@ async function handleTransferDestinationRequest(
     return { destination: null };
   }
 
-  const { isAfterHours } = getBusinessHoursStatus(tenant);
+  const { isAfterHours } = getBusinessHoursStatus({
+    ...tenant,
+    businessHoursStart: tenant.businessHoursStart?.toString(),
+    businessHoursEnd: tenant.businessHoursEnd?.toString(),
+  });;
 
   if (isAfterHours) {
     fastify.log.info(
@@ -471,7 +475,11 @@ async function handleAssistantRequest(
     return { assistantId: process.env.VAPI_ASSISTANT_ID! };
   }
 
-  const { isAfterHours } = getBusinessHoursStatus(tenant);
+  const { isAfterHours } = getBusinessHoursStatus({
+  ...tenant,
+  businessHoursStart: tenant.businessHoursStart?.toString(),
+  businessHoursEnd: tenant.businessHoursEnd?.toString(),
+});
 
   const existingContact = await fastify.db.contact.findUnique({
     where: { tenantId_phone: { tenantId: tenant.id, phone: fromNumber } },

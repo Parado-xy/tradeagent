@@ -8,6 +8,16 @@ import fp from "fastify-plugin";
 import { FastifyInstance } from "fastify";
 import { PrismaClient } from "../../../../db/generated/client";
 
+// ── TypeScript Module Augmentation ────────────────────────────
+// This tells the compiler that calling fastify.decorate("db", prisma)
+// permanently adds the .db property to FastifyInstance across the app.
+declare module "fastify" {
+  interface FastifyInstance {
+    db: PrismaClient;
+  }
+}
+// ──────────────────────────────────────────────────────────────
+
 const prisma = new PrismaClient();
 
 async function dbPlugin(fastify: FastifyInstance) {

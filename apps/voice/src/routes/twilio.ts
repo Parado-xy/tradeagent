@@ -323,7 +323,7 @@ if (selectedTech.status !== "AVAILABLE") {
     where: { id: tenant.id },
   });
 
-  await sendTechNotification(fullTenant, selectedTech, job, job.contact);
+  await sendTechNotification(fullTenant, selectedTech, {address: job.address, description: job.description}, {name: job.contact.name, phone: job.contact.phone, city: job.contact.city});
 }
 // ── Types ─────────────────────────────────────────────────────────────────
 
@@ -338,7 +338,7 @@ interface TwilioSmsPayload {
 type ThreadWithJob = {
   id: string;
   purpose: "ADDRESS_CONFIRMATION" | "DISPATCH_SELECTION";
-  meta: {};
+  meta?: any;
   job: {
     id: string;
     address: string;

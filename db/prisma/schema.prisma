@@ -51,7 +51,7 @@ model Tenant {
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
   // The operating hours of the tenant. 
-  businessHourStart Int?
+  businessHoursStart Int?
   businessHoursEnd  Int?
   timezone          String? 
 
