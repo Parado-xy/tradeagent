@@ -8,7 +8,7 @@
 // When you swap Whisper for a faster model, you change this file only.
 
 import Anthropic from "@anthropic-ai/sdk";
-import OpenAI from "openai";
+import OpenAI, {toFile} from "openai";
 import { PrismaClient } from "../../../../db/generated/client";
 
 const anthropic = new Anthropic();
@@ -62,7 +62,9 @@ async function transcribeAudio(audioUrl: string): Promise<string> {
   }
 
   const audioBuffer = await audioResponse.arrayBuffer();
-  const audioFile = new File([audioBuffer], "recording.mp3", {
+  
+  // Use OpenAI's toFile helper with a converted buffer
+  const audioFile = await toFile(Buffer.from(audioBuffer), "recording.mp3", {
     type: "audio/mpeg",
   });
 
@@ -70,8 +72,6 @@ async function transcribeAudio(audioUrl: string): Promise<string> {
     file: audioFile,
     model: "whisper-1",
     language: "en",
-    // Priming Whisper with trades vocabulary reduces transcription errors
-    // on words like "flapper", "P-trap", "wax ring", "sump pump"
     prompt:
       "Plumbing service call. Terms: fill valve, flapper, P-trap, " +
       "shutoff valve, water heater, drain snake, auger, wax ring, sump pump.",
