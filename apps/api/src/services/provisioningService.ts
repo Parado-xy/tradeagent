@@ -150,7 +150,7 @@ async function importNumberToVapi(
     throw new Error(`VAPI number import failed (${response.status}): ${body}`);
   }
 
-  const data = await response.json();
+  const data = (await response.json()) as {id: string};
   return data.id as string;
 }
 
