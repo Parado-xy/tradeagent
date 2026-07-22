@@ -172,6 +172,12 @@ export async function sendInvoice(db: PrismaClient, invoiceId: string) {
     });
   }
 
+  if (!tenant.twilioNumber){
+    throw Object.assign(new Error("Tenant has no twilio number"), {
+      statusCode: 422,
+    })
+  }
+
   // Generate the Stripe payment link
   const { paymentIntentId, paymentLink } = await createStripePaymentLink(
     invoice,
