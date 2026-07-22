@@ -1,19 +1,30 @@
+# render.yaml
+# Blueprint for TradeAgent OS — api + voice services, npm workspaces monorepo.
+# Both services install from the repo root so @prisma/client hoists correctly
+# and is resolvable from db/prisma/schema.prisma.
+
 services:
   - type: web
     name: tradeagent-api
     runtime: node
-    rootDir: apps/api
-    buildCommand: npm install && npx prisma generate --schema=../../db/prisma/schema.prisma && npm run build
-    startCommand: npm start
+    plan: starter
+    region: oregon           # match to your Neon DB region if possible
+    rootDir: .                # repo root — required for workspaces to hoist
+    buildCommand: >
+      npm install &&
+      npx prisma generate --schema=./db/prisma/schema.prisma &&
+      npm run build --workspace=apps/api
+    startCommand: npm run start --workspace=apps/api
+    healthCheckPath: /health
     envVars:
       - key: NODE_ENV
         value: production
       - key: API_PORT
-        value: "3001"
+        value: 3001
       - key: DASHBOARD_URL
-        sync: false   # your deployed dashboard origin, once you know it
-      - key: DATABASE_URL
         sync: false
+      - key: DATABASE_URL
+        sync: false           # set manually — pulled from Neon
       - key: TWILIO_ACCOUNT_SID
         sync: false
       - key: TWILIO_AUTH_TOKEN
@@ -22,32 +33,32 @@ services:
         sync: false
       - key: STRIPE_WEBHOOK_SECRET
         sync: false
-      - key: ANTHROPIC_API_KEY
+      - key: OPENAI_API_KEY
         sync: false
-      - key: OPENAI_API_KEY    
+      - key: ANTHROPIC_API_KEY
         sync: false
       - key: VAPI_API_KEY
         sync: false
       - key: VAPI_ASSISTANT_ID
         sync: false
-      # Public URL of the voice service — hardcoded, not fromService,
-      # because VAPI and Twilio call this from outside Render's network.
-      # fromService/hostport only resolves on Render's private network
-      # and would be unreachable by either of them.
-      - key: VOICE_SERVICE_BASE_URL
-        value: https://tradeagent-voice.onrender.com
 
   - type: web
     name: tradeagent-voice
     runtime: node
-    rootDir: apps/voice
-    buildCommand: npm install && npx prisma generate --schema=../../db/prisma/schema.prisma && npm run build
-    startCommand: npm start
+    plan: starter
+    region: oregon
+    rootDir: .
+    buildCommand: >
+      npm install &&
+      npx prisma generate --schema=./db/prisma/schema.prisma &&
+      npm run build --workspace=apps/voice
+    startCommand: npm run start --workspace=apps/voice
+    healthCheckPath: /health
     envVars:
       - key: NODE_ENV
         value: production
       - key: VOICE_PORT
-        value: "3002"
+        value: 3002
       - key: DATABASE_URL
         sync: false
       - key: TWILIO_ACCOUNT_SID
@@ -55,6 +66,8 @@ services:
       - key: TWILIO_AUTH_TOKEN
         sync: false
       - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: VAPI_API_KEY
         sync: false
       - key: VAPI_ASSISTANT_ID
         sync: false
