@@ -2,6 +2,10 @@
   "name": "tradeagent",
   "version": "0.1.0",
   "private": true,
+  "workspaces": [
+    "apps/api",
+    "apps/voice"
+  ],
   "scripts": {
     "dev:api": "npm run dev --prefix apps/api",
     "dev:voice": "npm run dev --prefix apps/voice",
