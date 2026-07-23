@@ -19,7 +19,8 @@ import jobsRoute from "./routes/jobs";
 import invoicesRoute from "./routes/invoices";
 import techniciansRoute from "./routes/technicians";
 import provisioningRoute from "./routes/provisioning"
-import tenantsRoutes from "./routes/tenants"; 
+import tenantsRoutes from "./routes/tenants";
+import authRoute from "./routes/auth"; 
 import dotenv from "dotenv";
 
 // Condigure dotenv
@@ -62,6 +63,7 @@ async function start() {
   await server.register(techniciansRoute, { prefix: `/api/${version}` });
   await server.register(provisioningRoute, {prefix: `/api/${version}`});
   await server.register(tenantsRoutes, {prefix: `/api/${version}`});
+  await server.register(authRoute, {prefix: `/api/${version}`});
 
   // ── Start ─────────────────────────────────────────────────
   try {
