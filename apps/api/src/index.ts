@@ -12,12 +12,14 @@
 import Fastify from "fastify";
 import cors from "@fastify/cors";
 import dbPlugin from "./plugins/db";
+import authPlugin from "./plugins/auth";
 import healthRoute from "./routes/health";
 import contactsRoute from "./routes/contacts";
 import jobsRoute from "./routes/jobs";
 import invoicesRoute from "./routes/invoices";
 import techniciansRoute from "./routes/technicians";
 import provisioningRoute from "./routes/provisioning"
+import tenantsRoutes from "./routes/tenants"; 
 import dotenv from "dotenv";
 
 // Condigure dotenv
@@ -47,6 +49,7 @@ async function start() {
   });
 
   await server.register(dbPlugin);
+  await server.register(authPlugin); 
 
   // ── Routes ────────────────────────────────────────────────
   // Every route is prefixed with /api/v1 so we have room
@@ -57,7 +60,8 @@ async function start() {
   await server.register(jobsRoute, { prefix: `/api/${version}` });
   await server.register(invoicesRoute, { prefix: `/api/${version}` });
   await server.register(techniciansRoute, { prefix: `/api/${version}` });
-  await server.register(provisioningRoute, {prefix: `/api/${version}`})
+  await server.register(provisioningRoute, {prefix: `/api/${version}`});
+  await server.register(tenantsRoutes, {prefix: `/api/${version}`});
 
   // ── Start ─────────────────────────────────────────────────
   try {
