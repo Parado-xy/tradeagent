@@ -1,93 +1,77 @@
 // apps/api/src/services/provisioningService.ts
-//
-// Orchestrates tenant creation: buys a Twilio number, imports it into
-// VAPI, links it to the shared assistant, then persists the Tenant row.
-//
-// Order matters and is NOT atomic across external services — Twilio
-// and VAPI don't participate in our Postgres transaction. If a later
-// step fails, we roll back the earlier external side effects (release
-// the Twilio number) rather than leaving orphaned billable resources.
+// Updated for two-step: register first → activate provisioning later.
 
-import {PrismaClient, Plan} from "../../../../db/generated/client";
+import { PrismaClient, Plan } from "../../../../db/generated/client";
 import twilio from "twilio";
 
 const twilioClient = twilio(
   process.env.TWILIO_ACCOUNT_SID,
-  process.env.TWILIO_AUTH_TOKEN
+  process.env.TWILIO_AUTH_TOKEN,
 );
 
 const VAPI_API_BASE = "https://api.vapi.ai";
 
-interface ProvisionTenantInput {
-  name: string;
-  phoneNumber: string; // their real business number
-  dispatcherPhone: string;
-  areaCode?: string; // optional preference for the new Twilio number
-  plan?: Plan;
+export interface ProvisionTenantInput {
+  tenantId: string; // NEW: from registered tenant
+  areaCode?: string;
 }
 
-interface ProvisionResult {
-  tenant: Awaited<ReturnType<PrismaClient["tenant"]["create"]>>;
+export interface ProvisionResult {
+  tenant: any; // Prisma Tenant
 }
 
-export async function provisionTenant(
+export async function activateProvisioning(
   db: PrismaClient,
-  input: ProvisionTenantInput
+  input: ProvisionTenantInput,
 ): Promise<ProvisionResult> {
-  // ── Step 1: Buy a Twilio number ─────────────────────────
+  const tenant = await db.tenant.findUnique({ where: { id: input.tenantId } });
+  if (!tenant) throw new Error("Tenant not found");
+
+  // Step 1: Buy Twilio number
   const twilioNumber = await purchaseTwilioNumber(input.areaCode);
 
   let vapiPhoneNumberId: string;
   try {
-    // ── Step 2: Import it into VAPI + attach the assistant ──
-    vapiPhoneNumberId = await importNumberToVapi(twilioNumber, input.name);
+    vapiPhoneNumberId = await importNumberToVapi(twilioNumber, tenant.name);
   } catch (err) {
-    // Roll back the Twilio purchase so we're not paying for an
-    // orphaned number nobody can use.
     await releaseTwilioNumber(twilioNumber);
     throw err;
   }
 
   try {
-    // ── Step 3: Persist the Tenant ───────────────────────────
-    const tenant = await db.tenant.create({
+    // Step 2: Update existing tenant
+    const updatedTenant = await db.tenant.update({
+      where: { id: input.tenantId },
       data: {
-        name: input.name,
-        phoneNumber: input.phoneNumber,
-        dispatcherPhone: input.dispatcherPhone,
         twilioNumber,
         vapiPhoneNumberId,
-        plan: input.plan ?? Plan.ALPHA,
       },
     });
 
-    return { tenant };
+    return { tenant: updatedTenant };
   } catch (err) {
-    // DB write failed after both external resources were created —
-    // roll back both so we don't leak a live, unassigned phone number.
     await releaseVapiNumber(vapiPhoneNumberId);
     await releaseTwilioNumber(twilioNumber);
     throw err;
   }
 }
 
+// ... (keep your existing purchaseTwilioNumber, releaseTwilioNumber, importNumberToVapi, releaseVapiNumber helpers)
 // ─────────────────────────────────────────────────────────────
 // Twilio
 // ─────────────────────────────────────────────────────────────
 
 async function purchaseTwilioNumber(areaCode?: string): Promise<string> {
-  const available = await twilioClient
-    .availablePhoneNumbers("US")
-    .local.list({
-      areaCode: areaCode ? Number(areaCode) : undefined,
-      voiceEnabled: true,
-      smsEnabled: true,
-      limit: 1,
-    });
+  const available = await twilioClient.availablePhoneNumbers("US").local.list({
+    areaCode: areaCode ? Number(areaCode) : undefined,
+    voiceEnabled: true,
+    smsEnabled: true,
+    limit: 1,
+  });
 
   if (available.length === 0) {
     throw new Error(
-      `No available Twilio numbers found${areaCode ? ` for area code ${areaCode}` : ""}`
+      `No available Twilio numbers found${areaCode ? ` for area code ${areaCode}` : ""}`,
     );
   }
 
@@ -117,10 +101,9 @@ async function releaseTwilioNumber(phoneNumber: string): Promise<void> {
 // VAPI
 // ─────────────────────────────────────────────────────────────
 
-
 async function importNumberToVapi(
   twilioNumber: string,
-  tenantName: string
+  tenantName: string,
 ): Promise<string> {
   const response = await fetch(`${VAPI_API_BASE}/phone-number`, {
     method: "POST",
@@ -143,14 +126,14 @@ async function importNumberToVapi(
     }),
   });
 
-  // TODO: Twilio provisioned numbers may take a second to dully be available. 
-  // Should we look into a backoff and retry strategy for this? 
+  // TODO: Twilio provisioned numbers may take a second to dully be available.
+  // Should we look into a backoff and retry strategy for this?
   if (!response.ok) {
     const body = await response.text();
     throw new Error(`VAPI number import failed (${response.status}): ${body}`);
   }
 
-  const data = (await response.json()) as {id: string};
+  const data = (await response.json()) as { id: string };
   return data.id as string;
 }
 
