@@ -13,6 +13,7 @@ import Fastify from "fastify";
 import cors from "@fastify/cors";
 import dbPlugin from "./plugins/db";
 import authPlugin from "./plugins/auth";
+import errorHandlerPlugin from "./plugins/error";
 import healthRoute from "./routes/health";
 import contactsRoute from "./routes/contacts";
 import jobsRoute from "./routes/jobs";
@@ -51,6 +52,7 @@ async function start() {
 
   await server.register(dbPlugin);
   await server.register(authPlugin); 
+  await server.register(errorHandlerPlugin);
 
   // ── Routes ────────────────────────────────────────────────
   // Every route is prefixed with /api/v1 so we have room
